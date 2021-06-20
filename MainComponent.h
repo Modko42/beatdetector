@@ -2,6 +2,7 @@
 #include <vector>
 #include <chrono>
 #include <thread>
+#include <sstream>
 #include <JuceHeader.h>
 
 using namespace juce;
@@ -16,11 +17,11 @@ void wait(int mseconds){
     this_thread::sleep_for(std::chrono::milliseconds(mseconds));
 }
 //==============================================================================
-class SimpleThumbnailComponent : public juce::Component,
+class ThumbnailComponent : public juce::Component,
                                  private juce::ChangeListener
 {
 public:
-    SimpleThumbnailComponent (int sourceSamplesPerThumbnailSample,
+    ThumbnailComponent (int sourceSamplesPerThumbnailSample,
                               juce::AudioFormatManager& formatManager,
                               juce::AudioThumbnailCache& cache,
                               AudioTransportSource& transportSourceToUse)
@@ -33,6 +34,7 @@ public:
     void setFile (const juce::File& file)
     {
         thumbnail.setSource (new juce::FileInputSource (file));
+       
     }
 
     void paint (juce::Graphics& g) override
@@ -57,7 +59,8 @@ public:
         g.setColour (juce::Colour(0xff0ffA600));
         
         counter = transportSource.getCurrentPosition() / (double)interval_time;
-        thumbnail.drawChannels (g, getLocalBounds(), 0 + counter*interval_time, interval_time + counter*interval_time, 1.0f);
+        thumbnail.drawChannels (g, getLocalBounds(), 0 + counter*interval_time, interval_time + counter*interval_time,
+                                0.8f / thumbnail.getApproximatePeak());
     }
 
     void changeListenerCallback (juce::ChangeBroadcaster* source) override
@@ -74,6 +77,7 @@ private:
     void thumbnailChanged()
     {
         repaint();
+        std::cout<<"Peak: "<<thumbnail.getApproximatePeak()<<std::endl;
     }
 
     juce::AudioTransportSource& transportSource;
@@ -81,16 +85,16 @@ private:
     int interval_time = 5;
     int counter = 0;
     
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SimpleThumbnailComponent)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ThumbnailComponent)
 };
 
 //------------------------------------------------------------------------------
 
-class SimplePositionOverlay : public juce::Component,
+class PositionOverlay : public juce::Component,
                               private juce::Timer
 {
 public:
-    SimplePositionOverlay (juce::AudioTransportSource& transportSourceToUse)
+    PositionOverlay (juce::AudioTransportSource& transportSourceToUse)
        : transportSource (transportSourceToUse)
     {
         startTimer (40);
@@ -99,16 +103,21 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto duration = (float) transportSource.getLengthInSeconds();
-
-        if (duration > 0.0)
+        if(duration > 0.0)
         {
-            auto audioPosition = (float) transportSource.getCurrentPosition();
-
-            //auto drawPosition = (audioPosition / duration) * (float) getWidth();
-            float drawPosition = ((float)((int)(audioPosition*100.0f) % (interval_time*100))) /
-                (float)interval_time / 100.0f * getWidth();
+            if(transportSource.getCurrentPosition() == 0)
+                counter = 0;
+            else
+                counter = transportSource.getCurrentPosition() / (double)interval_time;
+            
             g.setColour (juce::Colour(0xffC900ff));
-            g.drawLine (drawPosition, 0.0f, drawPosition, (float) getHeight(), 2.0f);
+            
+            auto audioPosition = (float) transportSource.getCurrentPosition();
+            auto drawPosition = audioPosition-(float)counter*interval_time;
+            auto actual_drawposition = drawPosition / interval_time * getWidth();
+         
+            
+            g.drawLine (actual_drawposition, 0.0f, actual_drawposition, (float) getHeight(), 2.0f);
         }
     }
 
@@ -119,7 +128,7 @@ public:
         if (duration > 0.0)
         {
             auto clickPosition = event.position.x;
-            auto audioPosition = (clickPosition / (float) getWidth()) * duration;
+            auto audioPosition = (clickPosition / (float) getWidth())*interval_time + counter*interval_time;
 
             transportSource.setPosition (audioPosition);
         }
@@ -140,14 +149,14 @@ private:
     int counter = 0;
     juce::AudioTransportSource& transportSource;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SimplePositionOverlay)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PositionOverlay)
 };
 
 
-class SimplePeakOverlay : public juce::Component,private KeyListener,private Timer
+class PeakOverlay : public juce::Component,private KeyListener,private Timer
 {
 public:
-    SimplePeakOverlay (juce::AudioTransportSource& transportSourceToUse)
+    PeakOverlay (juce::AudioTransportSource& transportSourceToUse)
        : transportSource (transportSourceToUse)
     {
         setWantsKeyboardFocus(true);
@@ -187,17 +196,25 @@ public:
                 }
             }
             
+           
             g.setColour (juce::Colour(0xff000fC4));
             g.drawLine(0.0f,(float)getHeight()/1.2f,0.0f,(float)getHeight(),7.0f);
             g.drawLine(getWidth(),(float)getHeight()/1.2f,getWidth(),(float)getHeight(),7.0f);
-            g.drawLine(getWidth()/4,(float)getHeight()/1.2f,getWidth()/4,(float)getHeight(),5.0f);
-            g.drawLine(getWidth()/4*3,(float)getHeight()/1.2f,getWidth()/4*3,(float)getHeight(),5.0f);
-            g.drawLine(getWidth()/2,(float)getHeight()/1.2f,getWidth()/2,(float)getHeight(),5.0f);
             
             
-            g.setColour (juce::Colour(0xff6d6d6d));
-            for(int i=1;i<=15;i++)
-                if(i%4!=0)g.drawLine(getWidth()/16*i,(float)getHeight()/1.2f,getWidth()/16*i,(float)getHeight(),2.5f);
+            for(int i=0;i<big_lines;i++){
+                g.setColour (juce::Colour(0xff6d6d6d));
+                for(int j=0;j<small_lines;j++){
+                    g.drawLine(
+                       getWidth()/big_lines*(i) + getWidth()/big_lines/small_lines*j,
+                       (float)getHeight()/1.2f,
+                       getWidth()/big_lines*(i) + getWidth()/big_lines/small_lines*j,
+                               (float)getHeight(),2.5f);
+                }
+                
+                g.setColour (juce::Colour(0xff000fC4));
+                g.drawLine(getWidth()/big_lines*i,(float)getHeight()/1.2f,getWidth()/big_lines*i,(float)getHeight(),5.0f);
+            }
             
             vector<float> quarter = getQuarterVector();
             g.setColour (juce::Colour(0xff00C40f));
@@ -239,17 +256,17 @@ public:
         if(currentFirstHit_asQuarter == 0){
             if(calculated_peaks.size() == 0)return percentages;
             currentFirstHit_asQuarter = calculated_peaks[0];
-            currentLastHit_asQuarter = calculated_peaks[4];
+            currentLastHit_asQuarter = calculated_peaks[big_lines];
         }
         else{
             auto it = find(calculated_peaks.begin(),calculated_peaks.end(),currentFirstHit_asQuarter);
             first_hit_index = distance(calculated_peaks.begin(),it);
-            if(calculated_peaks[first_hit_index+4]<currentSample){
-                currentFirstHit_asQuarter = calculated_peaks[first_hit_index+4];
-                first_hit_index += 4;
-                currentLastHit_asQuarter = calculated_peaks[first_hit_index+4];
+            if(calculated_peaks[first_hit_index+big_lines]<currentSample){
+                currentFirstHit_asQuarter = calculated_peaks[first_hit_index+big_lines];
+                first_hit_index += big_lines;
+                currentLastHit_asQuarter = calculated_peaks[first_hit_index+big_lines];
             }else{
-                currentLastHit_asQuarter = calculated_peaks[first_hit_index+4];
+                currentLastHit_asQuarter = calculated_peaks[first_hit_index+big_lines];
             }
         }
         float onepercent = (currentLastHit_asQuarter - currentFirstHit_asQuarter) / 100;
@@ -268,7 +285,6 @@ public:
     }
     
     bool keyPressed(const KeyPress &k, Component *c) override {
-        //drumhit();
         return true;
     }
   
@@ -281,6 +297,11 @@ public:
                                      calculated_peaks[calculated_peaks.size()-2]));
         }
         
+    }
+    
+    void cleardrumHits(){
+        drum_hits.clear();
+        currentFirstHit_asQuarter = 0;
     }
     
     void updatedrumHits(vector<float> drum_hits_){
@@ -322,6 +343,11 @@ public:
         interval_time = interval_;
     }
     
+    void set_bigandsmall_lines(int small,int big){
+        small_lines = small;
+        big_lines = big;
+    }
+    
 
 private:
 
@@ -339,8 +365,11 @@ private:
     int numberofSamples;
     int interval_time = 5;
     int counter = 0;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SimplePeakOverlay)
+    int big_lines = 4;
+    int small_lines = 4;
+    
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PeakOverlay)
 };
 
 class Logic{
@@ -349,12 +378,11 @@ class Logic{
     float adjustedBPM = 0;
     float startingState = 0;
     vector<float> data;
-    float micLatency_mseconds = 0;
     float latencyfromenvelope_insample = 1000;
     chrono::time_point<chrono::high_resolution_clock> startTimeV;
     vector<float> previous_inputs;//Stores last 4 inputs from previous buffer
     vector<float> previous_outputs;//Same for outputs
-    float mic_sensitivity = 0.05;
+    float mic_sensitivity = 0;
     
 public:
     vector<float> drum_hits;
@@ -362,6 +390,7 @@ public:
     vector<float> base_peaks; // For testing
     bool calibrating_out = false;
     bool calibrating_in = false;
+    float micLatency_mseconds = 0;
     
     Logic (AudioTransportSource& transportSourceToUse)
     : transportSource (transportSourceToUse){;}
@@ -555,8 +584,10 @@ public:
         for(int i=0;i<*max_element(envelope_of_buffer.begin(),envelope_of_buffer.end())*1000;i++)
             cout<<"-";
         cout<<endl;
+    
+        auto sensitivity_multiplier = pow(2,-1*mic_sensitivity / 3.0f);
         
-        if(*it<mic_sensitivity)return;
+        if(*it<0.1*sensitivity_multiplier)return;
         
         if(!drum_hits.empty()){
             if(abs(drum_hits[drum_hits.size()-1]-sampleHit)>7000) {
@@ -605,6 +636,10 @@ public:
         calibrating_out = true;
     }
     
+    void cleardrumHits(){
+        drum_hits.clear();
+    }
+    
     void startTime(){
         startTimeV = chrono::high_resolution_clock::now();
     }
@@ -620,6 +655,10 @@ public:
     }
     void setSensitivity(float value){
         mic_sensitivity = value;
+    }
+    
+    void setLatency(float value){
+        micLatency_mseconds = value;
     }
 };
 
@@ -644,42 +683,102 @@ public:
         logic(transportSource)
     {
         addAndMakeVisible (&openButton);
-        openButton.setButtonText ("Open...");
+        openButton.setButtonText ("Open");
         openButton.onClick = [this] { openButtonClicked(); };
 
+        
         addAndMakeVisible (&playButton);
         playButton.setButtonText ("Play");
-        playButton.onClick = [this] {playButtonClicked(); };
+        playButton.onClick = [this] {cleardrumHits();playButtonClicked(); };
         playButton.setColour (juce::TextButton::buttonColourId, juce::Colours::green);
         playButton.setEnabled (false);
 
+        
         addAndMakeVisible (&stopButton);
         stopButton.setButtonText ("Stop");
         stopButton.onClick = [this] { stopButtonClicked(); };
         stopButton.setColour (juce::TextButton::buttonColourId, juce::Colours::red);
         stopButton.setEnabled (false);
 
+        
+        addAndMakeVisible (audiosetupbutton);
+        audiosetupbutton.setButtonText ("Device Setup");
+        audiosetupbutton.onClick = [this] { audiosetupbuttonClicked(); };
+        
+        
+        addAndMakeVisible(calibrateLatencybutton);
+        calibrateLatencybutton.setButtonText("Calibrate Mic");
+        calibrateLatencybutton.onClick = [this]{
+            logic.calibrateMic();
+            mic_latency_slider.setValue(logic.micLatency_mseconds);
+        };
+        
+        
+        addAndMakeVisible (&plusBPM);
+        plusBPM.setButtonText("x2 BPM");
+        plusBPM.onClick = [this] {logic.setAdjustedBPM(2.0f);logic.updatePeaks();peakOverlay.updatePeaks(logic.calculated_peaks);BPMlabel.setText(to_string_2_decimal(logic.getAdjustedBPM())+" BPM",dontSendNotification);};
+        plusBPM.setEnabled(false);
+        
+        
+        addAndMakeVisible (&minusBPM);
+        minusBPM.setButtonText("/2 BPM");
+        minusBPM.onClick = [this] {logic.setAdjustedBPM(0.5f);logic.updatePeaks();peakOverlay.updatePeaks(logic.calculated_peaks);BPMlabel.setText(to_string_2_decimal(logic.getAdjustedBPM())+" BPM",dontSendNotification);};
+        minusBPM.setEnabled(false);
+        
+        addAndMakeVisible(&BPMlabel);
+        
+        addAndMakeVisible(mic_sensitivity_slider);
+        mic_sensitivity_slider.setRange(-20,20);
+        mic_sensitivity_slider.setValue(0,dontSendNotification);
+        mic_sensitivity_slider.addListener(this);
+        mic_sensitivity_slider.setNumDecimalPlacesToDisplay(0);
+        mic_sensitivity_slider.setTextValueSuffix(" dB");
+        
+        
+        addAndMakeVisible(mic_latency_slider);
+        mic_latency_slider.setRange(-50,250,1);
+        mic_latency_slider.setTextValueSuffix(" ms");
+        mic_latency_slider.setValue(60);
+        mic_latency_slider.addListener(this);
+
+        addAndMakeVisible(thumbnail_size_insec_slider);
+        thumbnail_size_insec_slider.setRange(4,30,1);
+        thumbnail_size_insec_slider.setValue(5,dontSendNotification);
+        thumbnail_size_insec_slider.setTextValueSuffix(" s");
+        thumbnail_size_insec_slider.addListener(this);
+        
+        addAndMakeVisible(Window_sizelabel);
+        addAndMakeVisible(Mic_sensitivitylabel);
+        addAndMakeVisible(Mic_latencylabel);
+        
+        Window_sizelabel.setText("Window size",dontSendNotification);
+        Mic_sensitivitylabel.setText("Microphone gain",dontSendNotification);
+        Mic_latencylabel.setText("Microphone latency",dontSendNotification);
+        
+        
+        addAndMakeVisible(Big_lineslabel);
+        addAndMakeVisible(Small_lineslabel);
+        Big_lineslabel.setText("Big line count",dontSendNotification);
+        Small_lineslabel.setText("Small line count",dontSendNotification);
+        
+        
+        addAndMakeVisible(big_lines_slider);
+        addAndMakeVisible(small_lines_slider);
+        big_lines_slider.addListener(this);
+        small_lines_slider.addListener(this);
+        big_lines_slider.setRange(1,10,1);
+        small_lines_slider.setRange(1,10,1);
+        big_lines_slider.setValue(4);
+        small_lines_slider.setValue(4);
+        
+        
+        
         addAndMakeVisible (&thumbnailComp);
         addAndMakeVisible (&positionOverlay);
         addAndMakeVisible(&peakOverlay);
-
-        addAndMakeVisible(&BPMlabel);
-        addAndMakeVisible (&plusBPM);
-        plusBPM.setButtonText("x2 BPM");
-        plusBPM.onClick = [this] {logic.setAdjustedBPM(2.0f);logic.updatePeaks();peakOverlay.updatePeaks(logic.calculated_peaks);BPMlabel.setText(to_string(logic.getAdjustedBPM())+" BPM",dontSendNotification);};
-        addAndMakeVisible (&minusBPM);
-        minusBPM.setButtonText("/2 BPM");
-        minusBPM.onClick = [this] {logic.setAdjustedBPM(0.5f);logic.updatePeaks();peakOverlay.updatePeaks(logic.calculated_peaks);BPMlabel.setText(to_string(logic.getAdjustedBPM())+" BPM",dontSendNotification);};
         
-        addAndMakeVisible(mic_sensitivity_slider);
-        mic_sensitivity_slider.setRange(0.0,10.0);
-        mic_sensitivity_slider.setSkewFactorFromMidPoint(0.1);
-        mic_sensitivity_slider.setValue(0.3,dontSendNotification);
-        mic_sensitivity_slider.addListener(this);
-        mic_sensitivity_slider.setNumDecimalPlacesToDisplay(3);
+        setSize (800, 400);
         
-        setSize (600, 400);
-
         formatManager.registerBasicFormats();
         transportSource.addChangeListener (this);
 
@@ -689,26 +788,14 @@ public:
             peakOverlay.updatedrumHits(logic.drum_hits);
         };
         
-        addAndMakeVisible(calibrateLatencybutton);
-        calibrateLatencybutton.setButtonText("Calibrate Mic");
-        calibrateLatencybutton.onClick = [this]{
-            logic.calibrateMic();
-        };
+        
         
         other_window.addToDesktop();
         other_window.setContentOwned(&audioSetupComp,true);
         deviceManager.addChangeListener(this);
         audioSetupComp.setItemHeight(25);
         
-        addAndMakeVisible (audiosetupbutton);
-        audiosetupbutton.setButtonText ("Device Setup");
-        audiosetupbutton.onClick = [this] { audiosetupbuttonClicked(); };
 
-        addAndMakeVisible(thumbnail_size_insec);
-        thumbnail_size_insec.setRange(4,30,1);
-        thumbnail_size_insec.setValue(5,dontSendNotification);
-        thumbnail_size_insec.setTextValueSuffix(" sec");
-        thumbnail_size_insec.addListener(this);
     }
 
     ~MainContentComponent() override
@@ -730,9 +817,25 @@ public:
                         auto* buffer = bufferToFill.buffer->getWritePointer (channel, bufferToFill.startSample);
              
                         // Fill the required number of samples with noise between -0.125 and +0.125
-                        for (auto sample = 0; sample < bufferToFill.numSamples; ++sample)
-                            buffer[sample] = 1.0;
+                        for (auto sample = 0; sample < bufferToFill.numSamples; ++sample){
+                            if(sample<(float)bufferToFill.numSamples/4)
+                                buffer[sample] = ((float)sample / bufferToFill.numSamples)*8;
+                            else{
+                                if(sample>3*(float)bufferToFill.numSamples/4)
+                                    buffer[sample] = (1 - (float)sample / bufferToFill.numSamples)*8;
+                                else{
+                                    buffer[sample] = 2.0f;
+                                }
+                            }
+                            if(sample % 5 == 0){
+                                for(float i=0;i<buffer[sample];i+=0.05)
+                                    cout<<"-";
+                                cout<<endl;
+                            }
+                        }
                     }
+            
+            
             logic.calibrating_out = false;
             logic.calibrating_in = true;
             logic.startTime();
@@ -784,21 +887,41 @@ public:
         transportSource.releaseResources();
     }
 
+    void cleardrumHits(){
+        peakOverlay.cleardrumHits();
+        logic.cleardrumHits();
+    }
+    
+    
     void resized() override
     {
         openButton.setBounds (10, 10, 100, 30);
-        playButton.setBounds (10, 50, 100, 30);
-        stopButton.setBounds (10, 90, 100, 30);
+        playButton.setBounds (10, 55, 100, 30);
+        stopButton.setBounds (10, 100, 100, 30);
         
         audiosetupbutton.setBounds(140,10,100,30);
-        calibrateLatencybutton.setBounds(140,50,100,30);
+        calibrateLatencybutton.setBounds(140,55,100,30);
         
-        BPMlabel.setBounds(380,10,100,30);
         plusBPM.setBounds(270,10,80,30);
-        minusBPM.setBounds(270,50,80,30);
+        minusBPM.setBounds(270,55,80,30);
+        BPMlabel.setBounds(270,100,100,30);
         
-        mic_sensitivity_slider.setBounds(140,90,200,30);
-        thumbnail_size_insec.setBounds(380,90,200,30);
+        mic_sensitivity_slider.setBounds(380,20,200,30);
+        mic_latency_slider.setBounds(380,65,200,30);
+        thumbnail_size_insec_slider.setBounds(380,110,200,30);
+        
+        Mic_sensitivitylabel.setBounds(380,0,200,30);
+        Mic_latencylabel.setBounds(380,45,200,30);
+        Window_sizelabel.setBounds(380,90,200,30);
+        
+        
+        Small_lineslabel.setBounds(590,0,200,30);
+        Big_lineslabel.setBounds(590,45,200,30);
+        
+        small_lines_slider.setBounds(590,20,200,30);
+        big_lines_slider.setBounds(590,65,200,30);
+        
+        
         
         juce::Rectangle<int> thumbnailBounds (10, 150, getWidth() - 20, (getHeight() - 170)/1.3);
         thumbnailComp.setBounds (thumbnailBounds);
@@ -819,12 +942,22 @@ public:
     
     void sliderValueChanged (juce::Slider* slider) override
         {
-            thumbnailComp.setInterval(thumbnail_size_insec.getValue());
-            positionOverlay.setInterval(thumbnail_size_insec.getValue());
-            peakOverlay.setInterval(thumbnail_size_insec.getValue());
+            thumbnailComp.setInterval(thumbnail_size_insec_slider.getValue());
+            positionOverlay.setInterval(thumbnail_size_insec_slider.getValue());
+            peakOverlay.setInterval(thumbnail_size_insec_slider.getValue());
             logic.setSensitivity(mic_sensitivity_slider.getValue());
+            logic.setLatency(mic_latency_slider.getValue());
+            peakOverlay.set_bigandsmall_lines(small_lines_slider.getValue(),big_lines_slider.getValue());
         }
 
+    
+    string to_string_2_decimal(float number){
+        stringstream stream;
+        stream << fixed << setprecision(2) << number;
+        return stream.str();
+    }
+    
+    
 private:
     enum TransportState
     {
@@ -908,7 +1041,7 @@ private:
                 delete audiobuffer;
                 logic.setSamplerate(reader->sampleRate);
                 logic.initialize(data_vec);
-                BPMlabel.setText(to_string(logic.getAdjustedBPM())+" BPM",dontSendNotification);
+                BPMlabel.setText(to_string_2_decimal(logic.getAdjustedBPM())+" BPM",dontSendNotification);
                 
                 peakOverlay.setNumberofSamples(data_vec.size());
                 peakOverlay.updateVectors(logic.calculated_peaks,logic.drum_hits);
@@ -920,6 +1053,8 @@ private:
                 readerSource.reset (newSource.release());
             }
         }
+        plusBPM.setEnabled(true);
+        minusBPM.setEnabled(true);
     }
 
     void playButtonClicked()
@@ -945,7 +1080,17 @@ private:
     TextButton calibrateLatencybutton;
     TextButton audiosetupbutton;
     Label BPMlabel;
-    Slider thumbnail_size_insec;
+    Label Window_sizelabel;
+    Label Mic_sensitivitylabel;
+    Label Mic_latencylabel;
+    Label Small_lineslabel;
+    Label Big_lineslabel;
+    Slider thumbnail_size_insec_slider;
+    Slider mic_sensitivity_slider;
+    Slider mic_latency_slider;
+    Slider small_lines_slider;
+    Slider big_lines_slider;
+    
     
     DocumentWindow other_window;
     AudioDeviceSelectorComponent audioSetupComp;
@@ -954,11 +1099,11 @@ private:
     AudioTransportSource transportSource;
     TransportState state;
     AudioThumbnailCache thumbnailCache;
-    SimpleThumbnailComponent thumbnailComp;
-    SimplePositionOverlay positionOverlay;
-    SimplePeakOverlay peakOverlay;
+    ThumbnailComponent thumbnailComp;
+    PositionOverlay positionOverlay;
+    PeakOverlay peakOverlay;
     Logic logic;
-    Slider mic_sensitivity_slider;
+    
     bool file_open = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainContentComponent)

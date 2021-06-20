@@ -20,7 +20,7 @@ public:
 
     void initialise (const juce::String&) override
     {
-        mainWindow.reset (new MainWindow ("Beat Detector v1.0", new MainContentComponent, *this));
+        mainWindow.reset (new MainWindow ("Beat Detector v1.3", new MainContentComponent, *this));
     }
 
     void shutdown() override                         { mainWindow = nullptr; }
